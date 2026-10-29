@@ -229,7 +229,8 @@ HTML = r"""<!DOCTYPE html>
     <label class="option"><input type="checkbox" id="heatToggle" checked> Field-anchored hotspot halos (experimental)</label>
     <label for="haloThreshold">Minimum provisional fruiting-weather index: <b id="haloThresholdLabel">70</b>/100</label>
     <input id="haloThreshold" type="range" min="0" max="100" step="5" value="70" style="width:100%">
-    <div class="heat-legend"><span class="heat-swatch"></span> Brighter green = stronger mapped candidate cluster</div>
+    <div class="heat-legend"><span class="heat-swatch"></span> Green = weather-qualified pasture candidate (not a verified finding)</div>
+    <p class="hint">Field priority (v0.16): select a field to see a weather-and-habitat assessment. Confirmed grazing increases confidence; unknown grazing remains unverified. The map halos still use the weather threshold and habitat exclusions.</p>
     <p class="hint" id="heatStatus">Preparing regional overview…</p>
     <button type="button" id="compareWeather">Compare weather across visible map</button>
     <div class="hint" id="weatherComparison" aria-live="polite">On demand: sample four locations within the current view. This does not change halos.</div>
@@ -285,6 +286,7 @@ HTML = r"""<!DOCTYPE html>
     <span id="rangeUnits"></span>
     <span>Green = within your selected range; amber = near; red = far outside. Not validated species thresholds.</span>
   </div>
+  <div id="fieldPriority" style="display:none;border:1px solid #b9ccbd;background:#f3f8f2;border-radius:7px;padding:9px;margin:7px 0;font-size:12px;line-height:1.5" aria-live="polite"></div>
   <div id="weatherGraph"></div>
   <div id="weatherMessage">Loading weather…</div>
   <div class="hint" id="suitabilityNote" hidden>Provisional fruiting-weather index for <em>Protostropharia semiglobata</em>. It does not verify dung, grazing or fungal presence and is not a finding probability. Moisture and temperature use exploratory responses; rainfall history, cooling, brief frost and season apply cautious multipliers. These are not measured species optima. See model details below.</div>
@@ -398,6 +400,7 @@ const vectorLayer = L.geoJSON(null, {
       p._weatherLat=Number.isFinite(p._halo_lat)?p._halo_lat:ctr.lat;
       p._weatherLon=Number.isFinite(p._halo_lon)?p._halo_lon:ctr.lng;
       weatherField={id:String(p.id),lat:p._weatherLat,lon:p._weatherLon};
+      selectedHabitat=habitatForField(p);
       requestWeather();
       if(annotationById[String(p.id)]) {
         layer.closePopup();
@@ -556,7 +559,7 @@ function drawOwnGeography(){
       layer.on('click',ev=>{
         if(drawMode==='point'){L.DomEvent.stopPropagation(ev);setDrawMode(null);openGeo('point',null,{lat:ev.latlng.lat,lon:ev.latlng.lng});layer.closePopup();}
         else if(drawMode==='area'){L.DomEvent.stopPropagation(ev);vertices.push(ev.latlng);renderDraft();layer.closePopup();}
-        else {L.DomEvent.stopPropagation(ev);weatherField={id:a.name,lat:centre.lat,lon:centre.lng};requestWeather();
+        else {L.DomEvent.stopPropagation(ev);weatherField={id:a.name,lat:centre.lat,lon:centre.lng};selectedHabitat=habitatForField(fieldProps,true);requestWeather();
           if(annotationById[fieldId]){layer.closePopup();openNotes(fieldProps);}}
       });
     }
@@ -592,7 +595,7 @@ document.getElementById('compareWeather').addEventListener('click',async()=>{
       const cells=[pt.label,pt.temperature_min===null?'—':`${pt.temperature_min} / ${pt.temperature_max}`,pt.rainfall??'—',pt.moisture_surface??'—'];
       cells.forEach((v,j)=>{const c=document.createElement('td');c.textContent=String(v);c.style.padding='4px 2px';row.appendChild(c)});
       row.style.cursor='pointer';row.title='Click to inspect weather at this point';
-      row.addEventListener('click',()=>{weatherField={id:pt.label,lat:pt.requested_lat,lon:pt.requested_lon};requestWeather()});
+      row.addEventListener('click',()=>{weatherField={id:pt.label,lat:pt.requested_lat,lon:pt.requested_lon};selectedHabitat=null;requestWeather()});
       table.appendChild(row);
     }
     comparisonEl.replaceChildren(table);
@@ -603,12 +606,53 @@ const speciesId={{ species.id|tojson }};
 loadMyGeography();
 let activeField=null;
 let weatherField=null;
+let selectedHabitat=null;
+// Habitat confidence remains categorical: do not manufacture a 0–100
+// occurrence likelihood from incomplete pasture and user-note evidence.
+function habitatForField(p, custom=false){
+  const ids=p._group_ids||[String(p.id)];
+  const notes=ids.map(k=>annotationById[String(k)]||haloAnnotations[String(k)]).filter(Boolean);
+  const n=notes.find(k=>k.assessment==='unsuitable'||k.grazing==='none_observed') ||
+          notes.find(k=>k.grazing==='confirmed'||k.assessment==='promising') ||notes[0]||{};
+  return {id:String(p.id), ids, type:String(p.markslag||''), eligible:custom?p.markslag==='pasture':isEligibleOfficial(p),
+    assessment:n.assessment||'unknown',grazing:n.grazing||'unknown',access:n.access||'unknown',
+    observation:n.observation||'not_surveyed',visited:!!n.visited,custom};
+}
+function priorityForField(h, weather){
+  if(!h)return null;
+  if(!h.eligible)return {label:'Not prioritized',reason:'Not registered or marked as an eligible pasture habitat.',state:'excluded'};
+  if(h.assessment==='unsuitable'||h.grazing==='none_observed')return {label:'Excluded by field notes',reason:'Your assessment excludes this field or reports no grazing observed. This can be revised after further evidence.',state:'excluded'};
+  if(h.access==='denied')return {label:'Do not prioritize for access',reason:'Your access notes indicate access denied. No legal access determination is made by Shroomap.',state:'excluded'};
+  if(!Number.isFinite(weather))return {label:'Weather unavailable',reason:'Cannot rank without usable local environmental data.',state:'unknown'};
+  const positive=h.grazing==='confirmed'||h.assessment==='promising'||h.observation==='observed';
+  const high=weather>=75, moderate=weather>=50;
+  if(high && positive)return {label:'High priority candidate',reason:'Favourable experimental fruiting weather and positive user-provided habitat evidence. Dung may still need verification.',state:'high'};
+  if(high)return {label:'Investigate habitat',reason:'Favourable experimental fruiting weather, but current grazing and dung availability are not confirmed.',state:'investigate'};
+  if(moderate)return {label:positive?'Moderate priority':'Conditional candidate',reason:positive?'Positive habitat evidence; weather conditions are only moderately favourable.':'Intermediate weather index and unverified habitat conditions.',state:'moderate'};
+  return {label:'Low weather priority today',reason:'The current experimental fruiting-weather index is low. This is not evidence that the species is absent.',state:'low'};
+}
+function renderFieldPriority(weather){
+  const el=document.getElementById('fieldPriority');
+  if(!weatherField||!selectedHabitat){el.style.display='none';el.replaceChildren();return;}
+  const h=selectedHabitat;
+  const result=priorityForField(h,weather);
+  el.style.display='block';el.replaceChildren();
+  const title=document.createElement('strong');title.textContent=`Search priority: ${result.label}`;
+  const detail=document.createElement('div');detail.textContent=result.reason;
+  const confidence=document.createElement('div');confidence.style.marginTop='5px';confidence.style.color='#56695a';
+  confidence.textContent=`Habitat: ${h.eligible?'mapped pasture proxy':'unconfirmed / ineligible'}; grazing: ${h.grazing.replaceAll('_',' ')}; assessment: ${h.assessment}; weather index: ${Number.isFinite(weather)?weather+'/100':'unavailable'}.`;
+  const caveat=document.createElement('div');caveat.style.marginTop='5px';caveat.style.color='#56695a';
+  caveat.textContent='Experimental relative ranking, not a probability of finding mushrooms. Pasture inventory does not prove active grazing or dung.';
+  el.append(title,detail,confidence,caveat);
+}
+
 const editPanel=document.getElementById('editPanel');
 const ids=['assessment','grazing','access','observation','notes'];
 const defaults={assessment:'unknown',grazing:'unknown', access:'unknown',observation:'not_surveyed',notes:'',visited:false};
 async function openNotes(p) {
   activeField=String(p.id);
   weatherField={id:String(p.id), lat:p._weatherLat, lon:p._weatherLon};
+  selectedHabitat=habitatForField(p, String(p.id).startsWith("custom:"));
   if(Number.isFinite(weatherField.lat) && Number.isFinite(weatherField.lon)) requestWeather();
   editPanel.style.display='block';
   document.getElementById('fieldSummary').innerHTML =
@@ -635,7 +679,7 @@ async function openNotes(p) {
     document.getElementById('saveStatus').textContent='';
   } catch(e) { if(activeField===idAtRequest) document.getElementById('saveStatus').textContent='Load error: '+e.message; }
 }
-document.getElementById('closePanel').addEventListener('click',()=>{ editPanel.style.display='none';activeField=null; MAP.closePopup(); weatherField=null;requestWeather();});
+document.getElementById('closePanel').addEventListener('click',()=>{ editPanel.style.display='none';activeField=null; MAP.closePopup(); weatherField=null;selectedHabitat=null;requestWeather();});
 document.getElementById('saveNotes').addEventListener('click',async()=>{
   if(!activeField) return;
   const idAtRequest=activeField;
@@ -654,6 +698,7 @@ document.getElementById('saveNotes').addEventListener('click',async()=>{
     document.getElementById('saveStatus').textContent='Saved';
     document.getElementById('lastSaved').textContent='Last saved: '+data.note.updated_at;
     for(const gid of (window.activeGroupIds||[idAtRequest])){annotationById[gid]=data.note;haloAnnotations[gid]={assessment:data.note.assessment,grazing:data.note.grazing};}
+    if(selectedHabitat && selectedHabitat.id===idAtRequest){selectedHabitat=habitatForField({id:idAtRequest,markslag:selectedHabitat.type,_group_ids:window.activeGroupIds||[idAtRequest]},selectedHabitat.custom);renderFieldPriority(weatherData?.halo_index);}
     updateVisible();
     drawHeat();
     refreshHaloNotes().catch(e=>{heatStatus.textContent='Exclusion refresh error: '+e.message;});
@@ -1057,6 +1102,7 @@ function referenceColor(v,low,high){
 MAP.on('click', () => {
   if(editPanel.style.display === 'block' || !weatherField)return;
   weatherField=null;
+  selectedHabitat=null;
   requestWeather();
 });
 async function requestWeather(){
@@ -1076,6 +1122,7 @@ async function requestWeather(){
     : `Map centre · local model weather ${lat.toFixed(3)}°N, ${lon.toFixed(3)}°E`;
   // Environmental index only; land classification is evaluated separately.
   weatherMessage.textContent='Loading daily weather…';
+  renderFieldPriority(null);
   try {
     const r=await fetch(`/api/weather?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`);
     const data=await r.json();
@@ -1167,6 +1214,7 @@ function drawWeather(){
     ?'Gridded model soil moisture, volumetric m³/m³; not a field measurement.'
     :suitMetric?'Provisional species fruiting-weather index; not a mushroom probability or verified field prediction.'
     :'Gridded model weather; not measured at the field.';
+  renderFieldPriority(weatherData.halo_index);
   const debug = weatherData.halo_diagnostics;
   const componentInfo=weatherField&&debug?.inputs&&debug?.components
     ? ` Components: current soil moisture ${debug.inputs.soil_moisture_0_to_7cm} m³/m³ → ${debug.components.current_moisture}/100 (50% weight); 7d mean ${debug.inputs.soil_moisture_7d_mean} → ${debug.components.sustained_moisture}/100 (20%); night ${debug.inputs.temperature_min}°C → ${debug.components.night_temperature}/100; day ${debug.inputs.temperature_max}°C → ${debug.components.day_temperature}/100 (temperatures together 30%). Baseline ${debug.baseline_score}/100; rainfall last 3/14 days ${debug.inputs.rainfall_3d_mm ?? 'N/A'}/${debug.inputs.rainfall_14d_mm ?? 'N/A'} mm; previous-week cooling ${debug.inputs.week_cooling_c ?? 'N/A'}°C; frost nights/freezing days (4d) ${debug.inputs.frost_nights_last_4d}/${debug.inputs.freezing_days_last_4d}; provisional rain/cooling/frost/season multipliers ${debug.modifiers.recent_rainfall}/${debug.modifiers.cooling}/${debug.modifiers.frost}/${debug.modifiers.season}.`

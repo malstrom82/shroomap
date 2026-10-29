@@ -16,6 +16,32 @@ Notable changes to Shroomap are documented here. Version numbers are development
 - Retains the v0.15 environmental calculation, halo thresholds and local SQLite annotations; no new schema is intended.
 - **Status:** Prepared for local testing. Do not create a v0.16 tag until verified.
 
+## [0.16] – 2026-10-29
+
+### Added
+
+Habitat-based field prioritization for Protostropharia semiglobata.
+
+Categorical search-priority assessment combining the experimental fruiting-weather index with available habitat information.
+
+Priority classifications distinguishing favourable candidates, fields requiring habitat verification, moderate or low weather suitability, and excluded fields.
+
+Integration of existing field annotations, including confirmed grazing, manual habitat suitability assessments, and exclusion status.
+
+Explanations of field-priority classifications in the field information panel.
+
+### Changed
+
+Extended field assessment beyond environmental conditions to incorporate habitat evidence.
+
+Preserved the existing weather-based halo threshold and scoring model, keeping environmental suitability separate from habitat-based search priority.
+
+### Limitations
+
+Priority classifications use provisional environmental thresholds and have not been validated against systematic field observations.
+
+Official pasture classifications do not independently confirm current grazing activity or mushroom presence.
+
 ## [0.15] — 2026-10-29
 
 ### Added
