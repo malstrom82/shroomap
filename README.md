@@ -6,7 +6,7 @@ Shroomap is a personal software project that combines public geospatial datasets
 
 The initial prototype focuses on *Protostropharia semiglobata* (dung roundhead; Swedish: gul kragskivling), a fungus associated with dung and dung-enriched grassland. The architecture is intended to support additional species profiles and more robust, evidence-based prioritization over time.
 
-**Project status:** Experimental local prototype. Initial GitHub checkpoint: v0.14.2. The environmental index is an exploratory heuristic, not a validated species-distribution model or a probability of finding mushrooms.
+**Project status:** Experimental local prototype; documented application version: **v0.15**. The initial GitHub checkpoint is v0.14.2. A habitat-priority feature is prepared for v0.16 but is not part of this documented version. The fruiting-weather index is an exploratory heuristic, not a validated species-distribution model or a probability of finding mushrooms.
 
 ![Shroomap application overview](assets/overview1.png)
 
@@ -15,9 +15,9 @@ The initial prototype focuses on *Protostropharia semiglobata* (dung roundhead; 
 - **Interactive geographic exploration:** Leaflet map with OpenStreetMap basemap and Swedish agricultural habitat data.
 - **Official habitat polygons:** Retrieves mapped meadow and pasture inventories from the Swedish Board of Agriculture (Jordbruksverket) through WFS, with an optional WMS layer for visual context.
 - **Field-centred environmental estimates:** Requests weather data near each candidate field, rather than using a single regional score for every field. Displays requested coordinates and the location returned by the weather provider.
-- **Environmental suitability index:** Calculates a provisional 0–100 weather-related index from modelled shallow soil moisture, recent moisture history, and minimum/maximum temperatures.
+- **Species fruiting-weather index:** Computes a provisional 0–100 index using shallow soil moisture, recent moisture history and minimum/maximum temperatures, with experimental adjustments for rainfall history, cooling and freezing conditions.
 - **Search-area visualization:** Displays green halos around qualifying pasture candidates when the local environmental index exceeds a user-selected threshold. Habitat eligibility and environmental conditions are separate decisions.
-- **Weather context:** Displays recent history and a seven-day forecast, including precipitation, temperature, humidity, wind, reference evapotranspiration and modelled soil moisture where available.
+- **Weather context:** Displays recent history and a seven-day forecast, including precipitation, temperature, humidity, wind, reference evapotranspiration and modelled soil moisture where available. Diagnostics include recent rainfall totals, cooling, frost indicators and scoring modifiers.
 - **Field annotations:** Saves field visits, grazing assessments, suitability judgments and notes.
 - **User-defined areas and observations:** Supports custom mapped areas and point observations with species, date, confidence and notes.
 - **Persistent local data:** Stores user annotations and observations in SQLite.
@@ -44,7 +44,7 @@ A halo is produced only when the mapped habitat passes the application's eligibi
 
 Shroomap's use of external services requires an internet connection. Availability and terms of upstream APIs and tile services may change. Third-party data and map content retain their respective licensing and attribution requirements.
 
-## Environmental index (v0.14.2)
+## Species fruiting-weather index (v0.15)
 
 The current index uses weather values for the requested field location, with nearby request coordinates cached at approximately 0.01° precision. This **request spacing is not a claim of kilometre-scale source-model accuracy**: Open-Meteo may resolve several requested positions to shared or different numerical model grid cells.
 
@@ -56,16 +56,20 @@ Open-Meteo's hourly volumetric soil-water content (m³/m³) for 0–7 cm and 7�
 | Seven-day shallow moisture mean | 20% | Indicates persistence of estimated moisture conditions. |
 | Daily minimum and maximum temperature | 30% total | Smooth, provisional temperature-response curves evaluated separately. |
 
-The component scores are combined into an index from 0 to 100. Missing essential measurements result in an unavailable score rather than an automatically favourable assessment. The weather panel exposes underlying values and calculation diagnostics for inspection.
+The components yield a baseline index from 0 to 100. v0.15 extends that baseline with **provisional, bounded weather-history modifiers**. The model examines recent rainfall over 3-day and 14-day windows, a cooling trend relative to the preceding week, and recent frost or persistent freezing. The modifiers are conditional: for many ordinary weather scenarios they equal 1.0 and have no effect. Rainfall is not independently added as a second soil-moisture measurement; excessive weighting would risk counting related moisture effects twice.
 
-**The response functions, weighting and numerical centres are engineering hypotheses, not experimentally established optima for *P. semiglobata*.** In particular, volumetric soil moisture cannot be interpreted as a universal percentage of field capacity without soil-specific information. Values such as 70 or 95 on the index are not percentages of occurrence probability, and there is no demonstrated calibration against observed fungal fruiting events.
+Seasonal context is described in the species profile, but the current numerical seasonal multiplier is **neutral**. A documented fruiting period from a different region does not justify imposing strict Swedish calendar cutoffs. One frost event does not permanently terminate the season in this model.
+
+Missing essential measurements produce an unavailable score rather than an automatically favourable assessment. The weather panel exposes the measured/modelled inputs, baseline component scores, weather-history adjustments and resulting index.
+
+**The response functions, weighting, numerical centres and weather-history adjustment factors are engineering hypotheses, not experimentally established optima for *P. semiglobata*.** In particular, volumetric soil moisture cannot be interpreted as a universal percentage of field capacity without soil-specific information. Values such as 70 or 95 on the index are not percentages of occurrence probability, and there is no demonstrated calibration against observed fungal fruiting events.
 
 ### Spatial and temporal uncertainty
 
 - Adjacent fields can receive different modelled moisture values because of model grid selection, elevation, soil parameterization or genuine weather differences. Similar recent rainfall does not ensure identical modelled soil moisture.
 - Weather-model estimates do not resolve within-field drainage, dung substrate, vegetation, shade, fine-scale topography or land management.
 - The current habitat filter is primarily categorical; it does not infer actual dung abundance, cattle presence or legal access.
-- Forecast suitability is exploratory. No quantitative forecast skill has been validated against mushroom records.
+- Forecast suitability is exploratory. Rainfall, cooling and frost effects are provisional rather than estimates from a fitted species response model. No quantitative forecast skill has been validated against mushroom records.
 
 ## Technology and architecture
 
@@ -128,8 +132,8 @@ For a new installation, the application will initialize its own database; sample
 
 ## Roadmap
 
-- Add a species-specific fruiting profile based on documented phenology, rainfall history, cooling patterns and frost exposure, with assumptions clearly identified.
-- Improve habitat classification and field-priority categories using confirmed grazing and observation evidence.
+- Evaluate and calibrate the preliminary species fruiting-weather profile introduced in v0.15 against documented observations and independent ecological evidence.
+- Develop habitat-based search-priority categories using pasture status, field notes and grazing evidence (prototype prepared for v0.16; not yet covered by this README).
 - Compare weather-model outputs and, where supported by accessible data, incorporate soil and terrain context without claiming field-scale measurement precision.
 - Develop repeatable tests for scoring, geometry and API-failure behaviour; separate backend, frontend and modelling modules.
 - Evaluate candidate-site rankings against accumulated field observations and revise the model based on actual predictive performance.
@@ -139,7 +143,11 @@ For a new installation, the application will initialize its own database; sample
 
 Shroomap is an independently developed personal project intended for learning and experimentation with geospatial data, interactive visualization, environmental modelling and human-centred decision support. It is **not** a peer-reviewed biological prediction system, a field identification guide or a guarantee of edibility, species presence or safe access to land.
 
-The initial repository commit captures the **v0.14.2 checkpoint**. Subsequent model changes will be recorded in separate commits to preserve a traceable development history.
+The initial repository commit captures the **v0.14.2 checkpoint**; this document describes **v0.15**. Later development, including the prepared v0.16 habitat-priority prototype, is tracked separately. See [CHANGELOG.md](CHANGELOG.md) for version history and release status.
+
+## Development history
+
+See [CHANGELOG.md](CHANGELOG.md) for documented checkpoints, changes and the status of the next development version.
 
 ## Licensing and attribution
 

@@ -227,7 +227,7 @@ HTML = r"""<!DOCTYPE html>
     <label class="option"><input type="checkbox" id="showCustom" checked> My areas</label>
     <label class="option"><input type="checkbox" id="showPoints" checked> Observation dots</label>
     <label class="option"><input type="checkbox" id="heatToggle" checked> Field-anchored hotspot halos (experimental)</label>
-    <label for="haloThreshold">Minimum experimental environmental index: <b id="haloThresholdLabel">70</b>/100</label>
+    <label for="haloThreshold">Minimum provisional fruiting-weather index: <b id="haloThresholdLabel">70</b>/100</label>
     <input id="haloThreshold" type="range" min="0" max="100" step="5" value="70" style="width:100%">
     <div class="heat-legend"><span class="heat-swatch"></span> Brighter green = stronger mapped candidate cluster</div>
     <p class="hint" id="heatStatus">Preparing regional overview…</p>
@@ -268,7 +268,7 @@ HTML = r"""<!DOCTYPE html>
     <button type="button" data-period="forecast" class="active">Next 7 days</button>
     <button type="button" data-period="history">Previous 30 days</button>
     <select id="weatherMetric" aria-label="Weather variable" style="width:auto;max-width:180px;padding:5px">
-      <option value="suitability" selected>Experimental environmental index (0–100)</option>
+      <option value="suitability" selected>Species fruiting-weather index (0–100)</option>
       <option value="rain">Rainfall (mm)</option>
       <option value="temperature">Min / max temperature (°C)</option>
       <option value="moisture_surface">Soil moisture 0–7 cm (m³/m³)</option>
@@ -287,7 +287,7 @@ HTML = r"""<!DOCTYPE html>
   </div>
   <div id="weatherGraph"></div>
   <div id="weatherMessage">Loading weather…</div>
-  <div class="hint" id="suitabilityNote" hidden>Experimental environmental index for <em>Protostropharia semiglobata</em>. It does not verify dung, grazing or fungal presence and is not a finding probability. Moisture and temperature use smooth exploratory curves without flat 100-point plateaus, not observed fungal optima. See model details below.</div>
+  <div class="hint" id="suitabilityNote" hidden>Provisional fruiting-weather index for <em>Protostropharia semiglobata</em>. It does not verify dung, grazing or fungal presence and is not a finding probability. Moisture and temperature use exploratory responses; rainfall history, cooling, brief frost and season apply cautious multipliers. These are not measured species optima. See model details below.</div>
   <details id="modelDetails" style="font-size:11px;margin-top:5px"><summary>How the experimental score is calculated</summary><p>Published ecology: dung/manured grassland and a broad warm-season to autumn fruiting period. Model assumptions (unvalidated): current 0–7 cm volumetric soil moisture contributes 50%, preceding seven-day average moisture contributes 20%, and separately assessed daily minimum and maximum temperatures contribute 30%. All response ranges are provisional engineering assumptions, NOT validated biological thresholds. Optional seasonal multiplier is deliberately NOT applied because UK seasonal ranges cannot reliably be transferred to Sweden. If essential weather data are absent, the index is unavailable. The temperature responses are smooth Gaussian curves. Moisture uses a conservative asymmetric response centred on an illustrative 0.27 m³/m³, penalising wet values less strongly because soil texture/field capacity are unknown. Temperature centres are 9°C overnight and 14°C daytime; they have NOT been established empirically for dung roundhead. The three components are for software testing and should not be interpreted as physiological optima, occurrence probabilities, or field-scale predictions.</p></details>
 </section>
 <div id="editPanel" role="dialog" aria-label="Field notes">
@@ -942,7 +942,7 @@ function drawHeat(){
       if(b.contains(latlng))addOnce(latlng[0],latlng[1],true);
     }
   }
-  heatStatus.textContent=`${count} habitat halos (${duplicates} duplicate positions suppressed). Nearby different fields can still overlap. Field-coordinate model weather index (experimental); ${localWeatherSamples.length} cached locations.`;
+  heatStatus.textContent=`${count} habitat halos (${duplicates} duplicate positions suppressed). Nearby different fields can still overlap. Field-coordinate species fruiting-weather index (provisional); ${localWeatherSamples.length} cached locations.`;
 }
 async function loadHeat(){
   const requestId=++heatRequest;
@@ -1098,7 +1098,7 @@ function drawWeather(){
     moisture_root:d.soil_moisture_7_to_28cm?.[i]
   }));
   const today=weatherData.today;
-  all.forEach((row,i)=>row.suitability=experimentalSuitability(all,i,today));
+  all.forEach(row=>row.suitability=weatherData.species_daily_scores?.[row.date] ?? null);
   // Source of truth for TODAY: identical server calculation used by halos.
   // JS keeps calculating the other six forecast days from the same weather data.
   const todayIndex=all.findIndex(row=>row.date===today);
@@ -1165,11 +1165,11 @@ function drawWeather(){
   const missing=values.length===0;
   const sourceInfo=metric.startsWith('moisture_')
     ?'Gridded model soil moisture, volumetric m³/m³; not a field measurement.'
-    :suitMetric?'Experimental weather-only index; not a mushroom probability or verified field prediction.'
+    :suitMetric?'Provisional species fruiting-weather index; not a mushroom probability or verified field prediction.'
     :'Gridded model weather; not measured at the field.';
   const debug = weatherData.halo_diagnostics;
   const componentInfo=weatherField&&debug?.inputs&&debug?.components
-    ? ` Components: current soil moisture ${debug.inputs.soil_moisture_0_to_7cm} m³/m³ → ${debug.components.current_moisture}/100 (50% weight); 7d mean ${debug.inputs.soil_moisture_7d_mean} → ${debug.components.sustained_moisture}/100 (20%); night ${debug.inputs.temperature_min}°C → ${debug.components.night_temperature}/100; day ${debug.inputs.temperature_max}°C → ${debug.components.day_temperature}/100 (temperatures together 30%).`
+    ? ` Components: current soil moisture ${debug.inputs.soil_moisture_0_to_7cm} m³/m³ → ${debug.components.current_moisture}/100 (50% weight); 7d mean ${debug.inputs.soil_moisture_7d_mean} → ${debug.components.sustained_moisture}/100 (20%); night ${debug.inputs.temperature_min}°C → ${debug.components.night_temperature}/100; day ${debug.inputs.temperature_max}°C → ${debug.components.day_temperature}/100 (temperatures together 30%). Baseline ${debug.baseline_score}/100; rainfall last 3/14 days ${debug.inputs.rainfall_3d_mm ?? 'N/A'}/${debug.inputs.rainfall_14d_mm ?? 'N/A'} mm; previous-week cooling ${debug.inputs.week_cooling_c ?? 'N/A'}°C; frost nights/freezing days (4d) ${debug.inputs.frost_nights_last_4d}/${debug.inputs.freezing_days_last_4d}; provisional rain/cooling/frost/season multipliers ${debug.modifiers.recent_rainfall}/${debug.modifiers.cooling}/${debug.modifiers.frost}/${debug.modifiers.season}.`
     : '';
   const qCounts=weatherData.soil_moisture_daily_sample_counts?.soil_moisture_0_to_7cm;
   const qIndex=weatherData.daily?.time?.indexOf(weatherData.today) ?? -1;
@@ -1412,7 +1412,7 @@ def weather():
         lat=float(request.args.get("lat","nan"))
         lon=float(request.args.get("lon","nan"))
         data=get_weather_at(lat,lon)
-        return jsonify({**data, 'halo_index': local_weather_index(data), 'halo_diagnostics': weather_index_details(data)})
+        return jsonify({**data, 'halo_index': local_weather_index(data), 'halo_diagnostics': weather_index_details(data), 'species_daily_scores': forecast_species_scores(data)})
     except (ValueError,requests.RequestException) as exc:
         return jsonify({"error":str(exc)}),502
 
@@ -1469,14 +1469,20 @@ def moisture_response(value):
     return gaussian_response(value, .27, .085 if value < .27 else .18)
 
 
-def weather_index_details(data):
-    """Score components with explicit input diagnostics and no full-credit plateau."""
+def weather_index_details(data, target_date=None):
+    """Exploratory P. semiglobata fruiting-weather index (not a probability).
+
+    Calculates from actual provider daily data; same routine supplies field halos,
+    detailed field diagnostics and the seven-day weather-index graph. All biological
+    response scales and weights are explicitly provisional.
+    """
     daily = data['daily']
     dates = daily.get('time', [])
+    target_date = target_date or data['today']
     try:
-        i = dates.index(data['today'])
+        i = dates.index(target_date)
     except ValueError:
-        return {'score': None, 'reason': 'Current date is missing'}
+        return {'score': None, 'reason': 'Requested date not in weather data'}
 
     def number(key, idx):
         values = daily.get(key) or []
@@ -1490,38 +1496,100 @@ def weather_index_details(data):
         return {'score': None, 'reason': 'Missing/invalid moisture or temperature data'}
     counts = data.get('soil_moisture_daily_sample_counts', {}).get('soil_moisture_0_to_7cm', [])
     today_samples = counts[i] if i < len(counts) else None
-    history = [number('soil_moisture_0_to_7cm', j) for j in range(max(0, i - 6), i + 1)]
-    history = [v for v in history if v is not None]
-    if len(history) < 4:
+    moisture_history = [number('soil_moisture_0_to_7cm', j) for j in range(max(0, i-6), i+1)]
+    moisture_history = [v for v in moisture_history if v is not None]
+    if len(moisture_history) < 4:
         return {'score': None, 'reason': 'Insufficient 7-day moisture history'}
-
-    avg7 = sum(history) / len(history)
-    # Illustrative tuning values only: no species-specific empirical optima established.
+    avg7 = sum(moisture_history)/len(moisture_history)
     current = moisture_response(moisture)
     sustained = moisture_response(avg7)
     night = gaussian_response(tmin, 9, 8)
     day = gaussian_response(tmax, 14, 9)
-    thermal = (night + day) / 2
-    score = round(100 * (.50 * current + .20 * sustained + .30 * thermal), 1)
+    thermal = (night+day)/2
+    baseline = .50*current + .20*sustained + .30*thermal
+
+    # Rainfall antecedent windows: use as a contextual *small* modifier, not
+    # an invented species-specific rainfall trigger. Wet soil already enters
+    # the baseline, so rainfall must not be weighted as a second main input.
+    def rain_window(days_back):
+        values=[number('precipitation_sum',j) for j in range(max(0,i-days_back+1),i+1)]
+        if len(values)<days_back or any(v is None for v in values):
+            return None
+        return round(sum(max(0,v) for v in values),1)
+    rain3=rain_window(3)
+    rain14=rain_window(14)
+    # No positive/negative rainfall adjustment without adequate observations.
+    rain_factor=1.0
+    if rain14 is not None:
+        if rain14 < 2 and avg7 < .15:
+            rain_factor=.94
+        elif rain14 >= 8 and moisture < .17:
+            rain_factor=1.03
+
+    # Temperature-change context over the preceding week, bounded to avoid
+    # the rule creating large score jumps. Not an established fruiting trigger.
+    earlier_max=[number('temperature_2m_max',j) for j in range(i-7,i-2)] if i>=7 else []
+    earlier_max=[v for v in earlier_max if v is not None]
+    cooling=None
+    cooling_factor=1.0
+    if len(earlier_max)>=4:
+        cooling=round(sum(earlier_max)/len(earlier_max)-tmax,1)
+        if 2 <= cooling <= 9:
+            cooling_factor=1.03
+
+    # A frost event is not a permanent end-of-season switch. Modelled air
+    # temperature cannot diagnose frozen ground. Stronger suppression applies
+    # only when repeated frost coincides with low daytime maxima.
+    last4=[(number('temperature_2m_min',j),number('temperature_2m_max',j))
+           for j in range(max(0,i-3),i+1)]
+    frosts=sum(1 for low,high in last4 if low is not None and low < 0)
+    freezing_days=sum(1 for low,high in last4 if high is not None and high <= 0)
+    frost_factor=1.0
+    if freezing_days>=2:
+        frost_factor=.60
+    elif freezing_days==1:
+        frost_factor=.82
+    elif frosts>=3:
+        frost_factor=.88
+    elif frosts>=1:
+        frost_factor=.97
+
+    # Broad season cue for a summer-autumn dung-associated mushroom in Sweden.
+    # Do not disqualify exceptional off-season fruiting or enforce a hard cutoff.
+    month=int(target_date[5:7])
+    season_factor={1:.77,2:.77,3:.82,4:.87,5:.94,6:1.,7:1.,8:1.,9:1.,10:1.,11:.96,12:.84}[month]
+    raw=100*baseline
+    score=round(min(100,max(0,raw*rain_factor*cooling_factor*frost_factor*season_factor)),1)
     return {
-        'score': score,
-        'inputs': {'soil_moisture_0_to_7cm': round(moisture, 4),
-                   'soil_moisture_7d_mean': round(avg7, 4),
-                   'temperature_min': round(tmin, 2),
-                   'temperature_max': round(tmax, 2),
-                   'surface_moisture_hourly_samples_today': today_samples},
-        'components': {'current_moisture': round(current * 100, 1),
-                       'sustained_moisture': round(sustained * 100, 1),
-                       'night_temperature': round(night * 100, 1),
-                       'day_temperature': round(day * 100, 1)},
-        'weights': {'current_moisture': .50, 'sustained_moisture': .20,
-                    'temperatures_combined': .30},
-        'model': 'Conservative asymmetric moisture response v0.14.2; NOT validated for this species'
+        'score':score,
+        'inputs': {'soil_moisture_0_to_7cm':round(moisture,4),
+                   'soil_moisture_7d_mean':round(avg7,4),
+                   'temperature_min':round(tmin,2),'temperature_max':round(tmax,2),
+                   'surface_moisture_hourly_samples_today':today_samples,
+                   'rainfall_3d_mm':rain3,'rainfall_14d_mm':rain14,
+                   'week_cooling_c':cooling,'frost_nights_last_4d':frosts,
+                   'freezing_days_last_4d':freezing_days},
+        'components': {'current_moisture':round(current*100,1),
+                       'sustained_moisture':round(sustained*100,1),
+                       'night_temperature':round(night*100,1),
+                       'day_temperature':round(day*100,1)},
+        'baseline_score':round(raw,1),
+        'modifiers': {'recent_rainfall':rain_factor,'cooling':cooling_factor,
+                      'frost':frost_factor,'season':season_factor},
+        'weights': {'current_moisture':.50,'sustained_moisture':.20,
+                    'temperatures_combined':.30},
+        'species':'Protostropharia semiglobata',
+        'model':'v0.15 provisional dung-roundhead fruiting-weather profile; none of the numerical optima or modifiers are species-validated'
     }
 
 
 def local_weather_index(data):
     return weather_index_details(data)['score']
+
+
+def forecast_species_scores(data):
+    dates=data.get('daily',{}).get('time',[])
+    return {day:weather_index_details(data,day)['score'] for day in dates}
 
 
 @app.route('/api/field-scores', methods=['POST'])
