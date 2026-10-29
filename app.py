@@ -171,6 +171,9 @@ HTML = r"""<!DOCTYPE html>
   .geo-view-details p {margin:7px 0;}
   .obs-dot {width:14px;height:14px;border-radius:50%;background:#14191a;border:2px solid white;box-shadow:0 0 0 1px #252b2e;}
   .heat-legend {display:flex;align-items:center;gap:7px;font-size:11px;color:#536254;margin-top:5px}
+  .priority-ring {box-sizing:border-box;border:3px solid #12623a;border-radius:50%;background:transparent;box-shadow:0 0 0 1px rgba(255,255,255,.8);pointer-events:none;}
+  .priority-entry {display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;background:white;border:1px solid #d6e2d8;border-radius:5px;padding:7px;margin-bottom:5px;color:#153729;cursor:pointer;gap:7px;}
+  .priority-entry:hover,.priority-entry:focus {border-color:#167b43;background:#eaf5ec;}
   .habitat-halo { border-radius:50%; pointer-events:none; background:radial-gradient(circle,rgba(13,141,52,var(--halo-alpha)) 0%,rgba(31,169,66,calc(var(--halo-alpha)*0.86)) 27%,rgba(52,193,83,calc(var(--halo-alpha)*0.47)) 57%,rgba(90,185,115,0) 100%); }
   .heat-swatch {width:90px;height:9px;border-radius:5px;background:linear-gradient(90deg,#d7e8cf,#75bc83,#248452)}
   #status { margin-top:18px; padding:10px; background:#e9eee8; border-radius:8px;
@@ -230,8 +233,15 @@ HTML = r"""<!DOCTYPE html>
     <label for="haloThreshold">Minimum provisional fruiting-weather index: <b id="haloThresholdLabel">70</b>/100</label>
     <input id="haloThreshold" type="range" min="0" max="100" step="5" value="70" style="width:100%">
     <div class="heat-legend"><span class="heat-swatch"></span> Green = weather-qualified pasture candidate (not a verified finding)</div>
-    <p class="hint">Field priority (v0.16): select a field to see a weather-and-habitat assessment. Confirmed grazing increases confidence; unknown grazing remains unverified. The map halos still use the weather threshold and habitat exclusions.</p>
+    <p class="hint">Field priority (v0.17): halos pass the experimental weather threshold; a solid outer ring marks qualifying pastures with confirmed grazing or a visited, positively assessed habitat. The ring does not imply mushroom presence.</p>
     <p class="hint" id="heatStatus">Preparing regional overview…</p>
+    <details id="priorityPanel" open style="margin:10px 0;border:1px solid #bfd5c8;border-radius:6px;padding:8px;background:#f7faf7">
+      <summary style="cursor:pointer;font-weight:600">Field priorities <span id="priorityCount" style="font-weight:normal"></span></summary>
+      <label for="priorityFilter" style="display:block;margin-top:8px">Show</label>
+      <select id="priorityFilter" style="width:100%"><option value="all">All qualified fields</option><option value="ring">Visit-first fields only</option></select>
+      <div id="priorityList" style="max-height:245px;overflow-y:auto;margin-top:7px;font-size:12px" aria-live="polite">Loading visible candidates…</div>
+      <p class="hint">Current viewport only; results depend on loaded habitat and weather data. Click a field to focus its map location and inspect its evidence.</p>
+    </details>
     <button type="button" id="compareWeather">Compare weather across visible map</button>
     <div class="hint" id="weatherComparison" aria-live="polite">On demand: sample four locations within the current view. This does not change halos.</div>
     <p class="hint">Registered grazing land is considered eligible unless marked unsuitable or with no grazing observed; ungrazed meadows are not assumed eligible. Each halo is fixed to one qualifying mapped habitat. Nearby halos overlap naturally. The user-adjustable score threshold is provisional and cannot guarantee growth. No halo is not evidence of absence. Weather estimates are requested near each individual field location and cached. Nearby fields can share model cells; requested coordinates do not guarantee field-scale observations. The graph reports weather only, independent of mapped habitat; halos additionally require eligible pasture. The scoring rules remain unvalidated.</p>
@@ -624,10 +634,10 @@ function priorityForField(h, weather){
   if(h.assessment==='unsuitable'||h.grazing==='none_observed')return {label:'Excluded by field notes',reason:'Your assessment excludes this field or reports no grazing observed. This can be revised after further evidence.',state:'excluded'};
   if(h.access==='denied')return {label:'Do not prioritize for access',reason:'Your access notes indicate access denied. No legal access determination is made by Shroomap.',state:'excluded'};
   if(!Number.isFinite(weather))return {label:'Weather unavailable',reason:'Cannot rank without usable local environmental data.',state:'unknown'};
-  const positive=h.grazing==='confirmed'||h.assessment==='promising'||h.observation==='observed';
+  const positive=h.grazing==='confirmed'||(h.assessment==='promising'&&h.visited);
   const high=weather>=75, moderate=weather>=50;
-  if(high && positive)return {label:'High priority candidate',reason:'Favourable experimental fruiting weather and positive user-provided habitat evidence. Dung may still need verification.',state:'high'};
-  if(high)return {label:'Investigate habitat',reason:'Favourable experimental fruiting weather, but current grazing and dung availability are not confirmed.',state:'investigate'};
+  if(high && positive)return {label:'High priority candidate',reason:'Favourable experimental fruiting weather and confirmed grazing or a visited, positively assessed habitat.',state:'high'};
+  if(high)return {label:'Investigate habitat',reason:'Favourable experimental fruiting weather, but grazing or habitat suitability has not been verified.',state:'investigate'};
   if(moderate)return {label:positive?'Moderate priority':'Conditional candidate',reason:positive?'Positive habitat evidence; weather conditions are only moderately favourable.':'Intermediate weather index and unverified habitat conditions.',state:'moderate'};
   return {label:'Low weather priority today',reason:'The current experimental fruiting-weather index is low. This is not evidence that the species is absent.',state:'low'};
 }
@@ -642,7 +652,7 @@ function renderFieldPriority(weather){
   const confidence=document.createElement('div');confidence.style.marginTop='5px';confidence.style.color='#56695a';
   confidence.textContent=`Habitat: ${h.eligible?'mapped pasture proxy':'unconfirmed / ineligible'}; grazing: ${h.grazing.replaceAll('_',' ')}; assessment: ${h.assessment}; weather index: ${Number.isFinite(weather)?weather+'/100':'unavailable'}.`;
   const caveat=document.createElement('div');caveat.style.marginTop='5px';caveat.style.color='#56695a';
-  caveat.textContent='Experimental relative ranking, not a probability of finding mushrooms. Pasture inventory does not prove active grazing or dung.';
+  caveat.textContent='Experimental relative ranking, not a probability of finding mushrooms. Pasture inventory does not prove active grazing.';
   el.append(title,detail,confidence,caveat);
 }
 
@@ -697,7 +707,7 @@ document.getElementById('saveNotes').addEventListener('click',async()=>{
     if(activeField!==idAtRequest) return;
     document.getElementById('saveStatus').textContent='Saved';
     document.getElementById('lastSaved').textContent='Last saved: '+data.note.updated_at;
-    for(const gid of (window.activeGroupIds||[idAtRequest])){annotationById[gid]=data.note;haloAnnotations[gid]={assessment:data.note.assessment,grazing:data.note.grazing};}
+    for(const gid of (window.activeGroupIds||[idAtRequest])){annotationById[gid]=data.note;haloAnnotations[gid]={assessment:data.note.assessment,grazing:data.note.grazing,visited:data.note.visited,access:data.note.access,observation:data.note.observation};}
     if(selectedHabitat && selectedHabitat.id===idAtRequest){selectedHabitat=habitatForField({id:idAtRequest,markslag:selectedHabitat.type,_group_ids:window.activeGroupIds||[idAtRequest]},selectedHabitat.custom);renderFieldPriority(weatherData?.halo_index);}
     updateVisible();
     drawHeat();
@@ -916,6 +926,49 @@ function addHalo(latlng, strength, user=false){
     iconSize:[diameter,diameter],iconAnchor:[radius,radius]});
   L.marker(latlng,{pane:'regionalHeat',icon,interactive:false,keyboard:false}).addTo(regionalHeat);
 }
+function priorityEvidence(note){
+  if(!note || note.assessment==='unsuitable'||note.grazing==='none_observed'||note.access==='denied')return null;
+  if(note.grazing==='confirmed')return 'Grazing confirmed';
+  if(note.assessment==='promising'&&note.visited)return 'Visited; suitable habitat';
+  return null; // Prior species observation alone does not qualify for a ring.
+}
+function noteForGroups(groupIds){
+  const notes=groupIds.map(id=>annotationById[String(id)]||haloAnnotations[String(id)]).filter(Boolean);
+  if(notes.some(n=>n.assessment==='unsuitable'||n.grazing==='none_observed'||n.access==='denied'))return {assessment:'unsuitable'};
+  return notes.find(n=>priorityEvidence(n))||notes[0]||null;
+}
+function addPriorityRing(lat,lng,user=false){
+  const radius=haloRadiusPx(MAP.getZoom(),user);
+  const diameter=2*radius+10;
+  const icon=L.divIcon({className:'',html:`<div class="priority-ring" style="width:${diameter}px;height:${diameter}px"></div>`,iconSize:[diameter,diameter],iconAnchor:[diameter/2,diameter/2]});
+  L.marker([lat,lng],{pane:'regionalHeat',icon,interactive:false,keyboard:false}).addTo(regionalHeat);
+}
+let visiblePriorityCandidates=[];
+function renderPriorityList(){
+  const target=document.getElementById('priorityList');
+  const filter=document.getElementById('priorityFilter').value;
+  const candidates=visiblePriorityCandidates.filter(x=>filter==='all'||x.evidence);
+  document.getElementById('priorityCount').textContent=`(${visiblePriorityCandidates.filter(x=>x.evidence).length} visit-first / ${visiblePriorityCandidates.length} qualifying)`;
+  target.replaceChildren();
+  if(!candidates.length){target.textContent=visiblePriorityCandidates.length?'No visit-first fields in the current view.':'No scored, qualifying fields loaded in this view.';return;}
+  for(const entry of candidates.slice(0,150)){
+    const button=document.createElement('button');button.type='button';button.className='priority-entry';
+    const main=document.createElement('span');main.textContent=`${entry.evidence?'Visit first · ':'Candidate · '}${entry.name}`;
+    const detail=document.createElement('small');detail.style.display='block';detail.style.color='#576a5b';detail.textContent=entry.evidence||'Habitat not confirmed';main.appendChild(detail);
+    const score=document.createElement('strong');score.textContent=entry.score.toFixed(1);
+    button.append(main,score);
+    button.onclick=()=>{
+      MAP.setView([entry.lat,entry.lng],Math.max(13,MAP.getZoom()));
+      weatherField={id:entry.name,lat:entry.lat,lon:entry.lng};
+      selectedHabitat={id:entry.id,ids:entry.ids||[entry.id],type:entry.type||'Bete',eligible:true,assessment:entry.note?.assessment||'unknown',grazing:entry.note?.grazing||'unknown',access:entry.note?.access||'unknown',observation:entry.note?.observation||'not_surveyed',visited:!!entry.note?.visited,custom:!!entry.custom};
+      requestWeather();
+      // The polygon will load when zooming in; selected weather is independent of the popup.
+    };
+    target.appendChild(button);
+  }
+  if(candidates.length>150){const p=document.createElement('p');p.textContent=`Showing 150 of ${candidates.length} candidates. Zoom in to narrow the list.`;target.appendChild(p);}
+}
+document.getElementById('priorityFilter').addEventListener('change',renderPriorityList);
 function rememberHabitats(cells){
   // Store feature anchors across viewport requests. Old positions do not get
   // recomputed from the centre of a query cell or from grouped markers.
@@ -933,13 +986,14 @@ function rememberHabitats(cells){
 }
 function drawHeat(){
   regionalHeat.clearLayers();
-  if(!heatToggle.checked || MAP.getZoom()<8)return;
+  if(!heatToggle.checked || MAP.getZoom()<8){visiblePriorityCandidates=[];renderPriorityList();return;}
   if(!haloNotesReady){heatStatus.textContent='Loading saved field exclusions…';return;}
   if(!localWeatherReady){heatStatus.textContent='Loading field-specific weather…';return;}
   // Provisional environmental threshold, NOT a species-specific guarantee.
   const minimumScore=Number(document.getElementById('haloThreshold').value);
   const b=MAP.getBounds().pad(.25);
   let count=0, duplicates=0;
+  visiblePriorityCandidates=[];
   // Exclusions are applied BEFORE spatial deduplication. Use a small spatial
   // threshold to collapse duplicated/overlapping GIS records with essentially
   // identical anchors. Nearby distinct fields keep their own separate halos.
@@ -948,27 +1002,34 @@ function drawHeat(){
     // Around 8–12 m at this latitude, for duplicate WFS geometry anchors.
     return `${Math.round(lat*10000)}:${Math.round(lng*10000)}`;
   }
-  function addOnce(lat,lng,user=false){
+  function addOnce(lat,lng,user=false,meta=null){
     const score=localScoreFor(lat,lng);
     if(score===null || score<minimumScore)return false;
     const key=spatialKey(lat,lng);
     if(occupied.has(key)){duplicates++;return false;}
     occupied.add(key);addHalo([lat,lng],score,user);count++;
+    if(meta){
+      const evidence=priorityEvidence(meta.note);
+      if(evidence)addPriorityRing(lat,lng,user);
+      // Only rank fields actually inside the viewport, not padded surroundings.
+      if(MAP.getBounds().contains([lat,lng]))visiblePriorityCandidates.push({...meta,lat,lng,score,evidence});
+    }
     return true;
   }
   for(const [key,p] of rememberedHabitatAnchors.entries()){
     if(!b.contains([p.lat,p.lng]))continue;
     const id=key.replace('official:','');
     const groupIds=p.groupIds||[id];
-    if(groupIds.some(gid=>{const n=haloAnnotations[gid]||annotationById[gid];return n?.assessment==='unsuitable'||n?.grazing==='none_observed';}))continue;
-    addOnce(p.lat,p.lng);
+    const note=noteForGroups(groupIds);
+    if(note?.assessment==='unsuitable'||note?.grazing==='none_observed'||note?.access==='denied')continue;
+    addOnce(p.lat,p.lng,false,{id,name:'Field '+id,ids:groupIds,note,type:'Bete'});
     if(count>=700)break;
   }
   if(document.getElementById('showCustom').checked){
     for(const area of ownAreas){
       if(area.habitat!=='pasture')continue;
       const n=haloAnnotations['custom:'+area.id] || annotationById['custom:'+area.id];
-      if(n?.assessment==='unsuitable' || n?.grazing==='none_observed')continue;
+      if(n?.assessment==='unsuitable' || n?.grazing==='none_observed'||n?.access==='denied')continue;
       // A polygon interior point is computed from original field geometry.
       let ring=area.geometry?.coordinates?.[0];
       if(!ring||ring.length<4)continue;
@@ -984,9 +1045,11 @@ function drawHeat(){
       if(!L.polygon(ring.map(c=>[c[1],c[0]])).getBounds().contains(latlng)){
         latlng[0]=vertices[0][1];latlng[1]=vertices[0][0];
       }
-      if(b.contains(latlng))addOnce(latlng[0],latlng[1],true);
+      if(b.contains(latlng))addOnce(latlng[0],latlng[1],true,{id:'custom:'+area.id,name:area.name||'My pasture',ids:['custom:'+area.id],note:n,type:'pasture',custom:true});
     }
   }
+  visiblePriorityCandidates.sort((a,b)=>Number(Boolean(b.evidence))-Number(Boolean(a.evidence)) || b.score-a.score);
+  renderPriorityList();
   heatStatus.textContent=`${count} habitat halos (${duplicates} duplicate positions suppressed). Nearby different fields can still overlap. Field-coordinate species fruiting-weather index (provisional); ${localWeatherSamples.length} cached locations.`;
 }
 async function loadHeat(){
@@ -994,7 +1057,7 @@ async function loadHeat(){
   if(heatController) heatController.abort();
   heatController=new AbortController();
   if(!heatToggle.checked || MAP.getZoom()<8){
-    regionalHeat.clearLayers();
+    regionalHeat.clearLayers();visiblePriorityCandidates=[];renderPriorityList();
     heatStatus.textContent=MAP.getZoom()<8?'Zoom to level 8+ for the grazing-habitat overview.':'Overview hidden.';
     return;
   }
@@ -1021,7 +1084,7 @@ async function loadHeat(){
 }
 function queueHeat(){clearTimeout(heatTimer);heatTimer=setTimeout(loadHeat,800);}
 document.getElementById('haloThreshold').addEventListener('input',e=>{document.getElementById('haloThresholdLabel').textContent=e.target.value;drawHeat();if(weatherData)drawWeather();});
-heatToggle.addEventListener('change',()=>{if(!heatToggle.checked){regionalHeat.clearLayers();heatStatus.textContent='Overview hidden.';}else {queueHeat();queueLocalScores();}});
+heatToggle.addEventListener('change',()=>{if(!heatToggle.checked){regionalHeat.clearLayers();visiblePriorityCandidates=[];renderPriorityList();heatStatus.textContent='Overview hidden.';}else {queueHeat();queueLocalScores();}});
 refreshHaloNotes().catch(e=>{heatStatus.textContent='Could not read saved exclusions: '+e.message;});
 queueHeat();
 queueLocalScores();
@@ -1848,8 +1911,8 @@ def all_halo_annotations():
     if request.args.get('species') != SPECIES['id']:
         return jsonify(error='Unknown species'),400
     with DB_LOCK,sqlite3.connect(DB_PATH) as conn:
-        rows=conn.execute('SELECT field_id,assessment,grazing FROM field_notes WHERE species_id=?', (SPECIES['id'],)).fetchall()
-    return jsonify(notes={str(fid):{'assessment':assessment,'grazing':grazing} for fid,assessment,grazing in rows})
+        rows=conn.execute('SELECT field_id,assessment,grazing,visited,access,observation FROM field_notes WHERE species_id=?', (SPECIES['id'],)).fetchall()
+    return jsonify(notes={str(fid):{'assessment':assessment,'grazing':grazing,'visited':bool(visited),'access':access,'observation':observation} for fid,assessment,grazing,visited,access,observation in rows})
 
 @app.route("/api/halo-annotations", methods=["POST"])
 def halo_annotations():
