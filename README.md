@@ -8,6 +8,8 @@ The initial prototype focuses on *Protostropharia semiglobata* (dung roundhead; 
 
 **Project status:** Experimental local prototype. Initial GitHub checkpoint: v0.14.2. The environmental index is an exploratory heuristic, not a validated species-distribution model or a probability of finding mushrooms.
 
+![Shroomap application overview](assets/overview1.png)
+
 ## Features
 
 - **Interactive geographic exploration:** Leaflet map with OpenStreetMap basemap and Swedish agricultural habitat data.
@@ -80,7 +82,7 @@ The application is currently implemented primarily in `app.py` as a compact prot
 Python 3.10 or newer is recommended for the project environment. Git and internet access are useful for cloning the source and retrieving the external data.
 
 ```bash
-git clone https://github.com/OWNER/shroomap.git
+git clone https://github.com/malstrom82/shroomap.git
 cd shroomap
 python -m venv .venv
 ```
