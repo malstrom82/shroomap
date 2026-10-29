@@ -11,7 +11,7 @@ from shapely.strtree import STRtree
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request, abort
 
 app = Flask(__name__)
 WFS_URL = "https://epub.sjv.se/inspire/opendata/wfs"
@@ -280,7 +280,13 @@ HTML = r"""<!DOCTYPE html>
 <body>
 <aside>
   <h1>🍄 Mushroom Habitat Explorer</h1>
-  <div class="muted">Västra Götaland · Version 0.12A</div>
+  <div class="muted">Västra Götaland · Version 0.19B (species-aware habitat interface)</div>
+  <div class="section"><label for="speciesSelect"><strong>Mushroom species</strong></label>
+    <select id="speciesSelect" style="width:100%;margin-top:6px" aria-label="Selected mushroom species">
+      {% for profile in species_options %}<option value="{{ profile.id }}" {% if profile.id == species.id %}selected{% endif %}>{{ profile.common_name }} — {{ profile.scientific_name }}{% if not profile.enabled %} (preview){% endif %}</option>{% endfor %}
+    </select>
+    <p class="hint">Only species with implemented habitat and weather models can produce field rankings. Preview species do not reuse dung roundhead scores.</p>
+  </div>
   <div class="section species">
     <strong>Selected mushroom</strong>
     <p><em>{{ species.scientific_name }}</em><br>{{ species.common_name }}</p>
@@ -290,15 +296,16 @@ HTML = r"""<!DOCTYPE html>
     <p class="hint">{{ species.data_note }}</p>
   </div>
   <div class="section">
-    <strong>Land classifications</strong>
+    <strong>Pasture inventory classifications</strong>
     <div id="filters"></div>
   </div>
   <div class="section">
-    <strong>My locations</strong>
+    <strong>My pasture assessments</strong>
     <label class="option"><input id="hideUnsuitable" type="checkbox"> Hide unsuitable polygons</label>
     <label class="option"><input id="onlyAnnotated" type="checkbox"> Show only annotated polygons</label>
   </div>
   <div class="section">
+    <p class="hint">Jordbruksverket pasture filters apply only to dung roundhead. Future woodland species use independent habitat layers and assessment controls.</p>
     <label class="option"><input id="wmsToggle" type="checkbox"> Official map overlay (WMS)</label>
     <label class="option"><input id="vectorToggle" type="checkbox" checked> Clickable polygons (WFS)</label>
   </div>
@@ -311,7 +318,7 @@ HTML = r"""<!DOCTYPE html>
     <label for="haloThreshold">Minimum provisional fruiting-weather index: <b id="haloThresholdLabel">70</b>/100</label>
     <input id="haloThreshold" type="range" min="0" max="100" step="5" value="70" style="width:100%">
     <div class="heat-legend"><span class="heat-swatch"></span> Green = weather-qualified pasture candidate (not a verified finding)</div>
-    <p class="hint">Field priority (v0.18, current species): halos pass the experimental weather threshold; a solid outer ring identifies qualifying fields with verified suitable habitat, observed grazing, or a confirmed field-note observation of the selected species. Historical occurrence is habitat evidence, not evidence of fruiting today.</p>
+    <p class="hint">Field priority (current species): halos pass the experimental weather threshold; a solid outer ring identifies qualifying fields with verified suitable habitat, observed grazing, or a confirmed field-note observation of the selected species. Historical occurrence is habitat evidence, not evidence of fruiting today.</p>
     <p class="hint" id="heatStatus">Preparing regional overview…</p>
     <details id="priorityPanel" open style="margin:10px 0;border:1px solid #bfd5c8;border-radius:6px;padding:8px;background:#f7faf7">
       <summary style="cursor:pointer;font-weight:600">Field priorities <span id="priorityCount" style="font-weight:normal"></span></summary>
@@ -382,7 +389,7 @@ HTML = r"""<!DOCTYPE html>
 </section>
 <div id="editPanel" role="dialog" aria-label="Field notes">
   <div style="display:flex;justify-content:space-between;gap:8px;align-items:start;">
-    <h2>Field notes</h2><button type="button" id="closePanel">Close</button>
+    <h2>Pasture habitat assessment</h2><button type="button" id="closePanel">Close</button>
   </div>
   <div id="fieldSummary" class="detail"></div>
   <div class="field"><label for="assessment">My assessment</label>
@@ -390,7 +397,7 @@ HTML = r"""<!DOCTYPE html>
   </div>
   <div class="hint">Suitable confirms habitat for the selected species; an observation confirms past occurrence, not present fruiting. Grazing records observed activity, and no recent grazing observed does not automatically exclude suitable land. Assessments and field searches record a visit.</div>
   <div class="field"><label class="option"><input id="visited" type="checkbox"> I have visited this area (also for visits without an assessment)</label></div>
-  <div class="field"><label for="grazing">Grazing activity</label>
+  <div class="field"><label for="grazing">Observed grazing activity (pasture)</label>
     <select id="grazing"><option value="unknown">Unknown</option><option value="confirmed">Active grazing observed</option><option value="none_observed">No recent grazing observed (does not exclude)</option></select>
   </div>
   <div class="field"><label for="access">Reported access</label>
@@ -692,6 +699,12 @@ document.getElementById('compareWeather').addEventListener('click',async()=>{
   }catch(err){comparisonEl.textContent='Comparison unavailable: '+err.message}
 });
 const speciesId={{ species.id|tojson }};
+const speciesSelect=document.getElementById('speciesSelect');
+if(speciesSelect){speciesSelect.addEventListener('change',()=>{
+  const chosen=speciesSelect.value;
+  if(chosen===speciesId)return;
+  window.location.assign('/?species='+encodeURIComponent(chosen));
+});}
 loadMyGeography();
 let activeField=null;
 let weatherField=null;
@@ -1399,9 +1412,80 @@ def fetch_polygons(bbox):
     return {"features": features, "truncated": len(features) >= MAX_FEATURES}
 
 
+# A deliberately non-scoring landing page for catalogue species whose independent
+# geospatial habitat adapter has not yet been implemented. No misleading halos.
+SPECIES_PREVIEW_HTML = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shroomap — {{ profile.common_name }}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}body{font:14px system-ui,sans-serif;color:#203329;margin:0}
+aside{position:absolute;left:0;top:0;bottom:0;width:310px;overflow:auto;padding:17px;background:#f8faf7;border-right:1px solid #d3e0d7;z-index:500}
+#map{position:absolute;inset:0 0 0 310px}h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:18px 0 7px}
+select{width:100%;padding:9px;margin:7px 0;border:1px solid #9cb8a6;border-radius:5px;background:white}
+.notice{background:#f0f6f1;border-left:4px solid #56836a;padding:10px 12px;line-height:1.55}
+.hint{font-size:12px;color:#586d60;line-height:1.5}a{color:#205f43}label{display:block;margin:8px 0}
+#legend{background:#fff;border:1px solid #d3e0d7;border-radius:7px;padding:10px;margin-top:12px}
+@media(max-width:700px){aside{width:100%;bottom:auto;height:255px}#map{inset:255px 0 0 0}}
+</style></head><body>
+<aside><h1>Shroomap</h1><div class="hint">Västra Götaland · v0.19B · Habitat interface preview</div>
+<label for="speciesSelect"><b>Mushroom species</b></label>
+<select id="speciesSelect" onchange="window.location.assign('/?species='+encodeURIComponent(this.value))">
+{% for p in profiles %}<option value="{{p.id}}" {% if p.id==selected_id %}selected{% endif %}>{{p.common_name}} — {{p.scientific_name}}{% if not p.enabled %} (preview){% endif %}</option>{% endfor %}
+</select>
+<h2><em>{{profile.scientific_name}}</em></h2>
+<div class="notice"><b>Habitat mapping is not yet activated for this species.</b><p>The map displays your existing manually mapped areas and species-matched observation points for inspection only. There are no automated forest scores, halos, or rankings here. No pasture data or fruiting parameters are borrowed from dung roundhead.</p></div>
+{% if selected_id == 'amanita_muscaria' %}
+<h2>Forest habitat context</h2>
+<p class="hint">Fly agaric is ectomycorrhizal and commonly associated with trees such as birch, pine and spruce. The following are inspection layers, not ecological suitability filters.</p>
+<label><input id="showForest" type="checkbox" checked> My manually drawn forest areas</label>
+<label><input id="showOther" type="checkbox"> Other manually drawn areas</label>
+<label><input id="showObs" type="checkbox" checked> Recorded fly agaric observations</label>
+<h2>Planned forest assessments</h2><p class="hint">Host trees (birch, pine, spruce, mixed, unknown); habitat assessment (suitable, unsuitable, unassessed); forest condition and visit history. These will be enabled once forest data and species-aware persistence are available.</p>
+{% else %}
+<h2>General habitat context</h2><p class="hint">No species-specific hotspot prediction is available in this preview.</p>
+<label><input id="showForest" type="checkbox"> My manually drawn forest areas</label>
+<label><input id="showOther" type="checkbox" checked> Other manually drawn areas</label>
+<label><input id="showObs" type="checkbox" checked> Observations recorded for this species</label>
+{% endif %}
+<div id="legend"><b>Inspection only</b><p class="hint" id="inspectionStatus">Loading your saved areas…</p><p class="hint">All polygons are user-created and unverified; tree species, forest boundaries and ecological conditions are not inferred.</p></div>
+<p class="hint"><a href="/?species=protostropharia_semiglobata">Return to the working pasture model</a></p>
+</aside><div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const selectedSpecies={{ selected_id|tojson }};
+const map=L.map('map').setView([58.1,12.85],10);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+const areaLayer=L.featureGroup().addTo(map),pointLayer=L.layerGroup().addTo(map);
+let savedAreas=[],savedObservations=[];
+const safe=t=>String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const showForest=document.getElementById('showForest'),showOther=document.getElementById('showOther'),showObs=document.getElementById('showObs');
+function redraw(){
+ areaLayer.clearLayers();pointLayer.clearLayers();let areasShown=0,observationsShown=0;
+ for(const a of savedAreas){const forest=a.habitat==='forest';if(!(forest?showForest.checked:showOther.checked))continue;
+  try{const obj=typeof a.geometry==='string'?JSON.parse(a.geometry):a.geometry;
+   L.geoJSON(obj,{style:{color:forest?'#276c55':'#9a8955',weight:2,fillOpacity:.13}}).bindPopup('<b>'+safe(a.name)+'</b><p>Recorded habitat: '+safe(a.habitat)+'</p><p>'+safe(a.notes||'')+'</p>').addTo(areaLayer);areasShown++;
+  }catch(e){}
+ }
+ if(showObs.checked)for(const p of savedObservations){if(p.species_id!==selectedSpecies)continue;const lat=Number(p.lat),lon=Number(p.lon);if(!Number.isFinite(lat)||!Number.isFinite(lon))continue;
+  L.circleMarker([lat,lon],{radius:6,color:'#202e29',weight:2,fillColor:'#fff',fillOpacity:1}).bindPopup('<b>Recorded observation</b><p>'+safe(p.observed_on)+' · '+safe(p.confidence)+'</p><p>'+safe(p.notes||'')+'</p>').addTo(pointLayer);observationsShown++;
+ }
+ document.getElementById('inspectionStatus').textContent=areasShown+' manually drawn areas and '+observationsShown+' matching observation points displayed.';
+}
+for(const el of [showForest,showOther,showObs])el.addEventListener('change',redraw);
+(async()=>{try{const [a,o]=await Promise.all([fetch('/api/my-areas'),fetch('/api/my-observations')]);if(!a.ok||!o.ok)throw Error('Could not load stored geography');savedAreas=(await a.json()).items||[];savedObservations=(await o.json()).items||[];redraw();}catch(e){document.getElementById('inspectionStatus').textContent=e.message;}})();
+</script></body></html>"""
 @app.route("/")
 def index():
-    return render_template_string(HTML, wms_url=WMS_URL, layer=LAYER, species=SPECIES)
+    selected_id=request.args.get('species', ACTIVE_SPECIES_ID)
+    profile=SPECIES_REGISTRY.get(selected_id)
+    if profile is None:
+        abort(404)
+    if not species_is_active(selected_id):
+        return render_template_string(SPECIES_PREVIEW_HTML, profile=profile,
+            profiles=list(SPECIES_REGISTRY.values()), selected_id=selected_id)
+    return render_template_string(HTML, wms_url=WMS_URL, layer=LAYER,
+        species=profile, species_options=list(SPECIES_REGISTRY.values()))
 
 
 @app.route("/api/polygons")
