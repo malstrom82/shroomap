@@ -233,7 +233,7 @@ HTML = r"""<!DOCTYPE html>
     <label for="haloThreshold">Minimum provisional fruiting-weather index: <b id="haloThresholdLabel">70</b>/100</label>
     <input id="haloThreshold" type="range" min="0" max="100" step="5" value="70" style="width:100%">
     <div class="heat-legend"><span class="heat-swatch"></span> Green = weather-qualified pasture candidate (not a verified finding)</div>
-    <p class="hint">Field priority (v0.17): halos pass the experimental weather threshold; a solid outer ring marks qualifying pastures with confirmed grazing or a visited, positively assessed habitat. The ring does not imply mushroom presence.</p>
+    <p class="hint">Field priority (v0.17.1): halos pass the experimental weather threshold; a solid outer ring identifies qualifying fields with verified suitable habitat, observed grazing, or a confirmed field-note observation of the selected species. Historical occurrence is habitat evidence, not evidence of fruiting today.</p>
     <p class="hint" id="heatStatus">Preparing regional overview…</p>
     <details id="priorityPanel" open style="margin:10px 0;border:1px solid #bfd5c8;border-radius:6px;padding:8px;background:#f7faf7">
       <summary style="cursor:pointer;font-weight:600">Field priorities <span id="priorityCount" style="font-weight:normal"></span></summary>
@@ -244,7 +244,7 @@ HTML = r"""<!DOCTYPE html>
     </details>
     <button type="button" id="compareWeather">Compare weather across visible map</button>
     <div class="hint" id="weatherComparison" aria-live="polite">On demand: sample four locations within the current view. This does not change halos.</div>
-    <p class="hint">Registered grazing land is considered eligible unless marked unsuitable or with no grazing observed; ungrazed meadows are not assumed eligible. Each halo is fixed to one qualifying mapped habitat. Nearby halos overlap naturally. The user-adjustable score threshold is provisional and cannot guarantee growth. No halo is not evidence of absence. Weather estimates are requested near each individual field location and cached. Nearby fields can share model cells; requested coordinates do not guarantee field-scale observations. The graph reports weather only, independent of mapped habitat; halos additionally require eligible pasture. The scoring rules remain unvalidated.</p>
+    <p class="hint">Registered grazing land is considered eligible unless marked unsuitable; ungrazed meadows are not assumed eligible. Each halo is fixed to one qualifying mapped habitat. Nearby halos overlap naturally. The user-adjustable score threshold is provisional and cannot guarantee growth. No halo is not evidence of absence. Weather estimates are requested near each individual field location and cached. Nearby fields can share model cells; requested coordinates do not guarantee field-scale observations. The graph reports weather only, independent of mapped habitat; halos additionally require eligible pasture. The scoring rules remain unvalidated.</p>
   </div>
   <div id="status">Move or zoom the map to explore.</div>
   <div class="section"><button id="reload">Refresh visible area</button></div>
@@ -308,11 +308,12 @@ HTML = r"""<!DOCTYPE html>
   </div>
   <div id="fieldSummary" class="detail"></div>
   <div class="field"><label for="assessment">My assessment</label>
-    <select id="assessment"><option value="unknown">Unassessed</option><option value="promising">👍 Promising / suitable</option><option value="unsuitable">🚫 Unsuitable / irrelevant</option></select>
+    <select id="assessment"><option value="unknown">Unassessed</option><option value="promising">👍 Suitable habitat (personally confirmed)</option><option value="unsuitable">🚫 Unsuitable / irrelevant</option></select>
   </div>
-  <div class="field"><label class="option"><input id="visited" type="checkbox"> I have visited this area</label></div>
+  <div class="hint">Suitable confirms habitat for the selected species; an observation confirms past occurrence, not present fruiting. Grazing records observed activity, and no recent grazing observed does not automatically exclude suitable land. Assessments and field searches record a visit.</div>
+  <div class="field"><label class="option"><input id="visited" type="checkbox"> I have visited this area (also for visits without an assessment)</label></div>
   <div class="field"><label for="grazing">Grazing activity</label>
-    <select id="grazing"><option value="unknown">Unknown</option><option value="confirmed">Confirmed grazing</option><option value="none_observed">No grazing observed</option></select>
+    <select id="grazing"><option value="unknown">Unknown</option><option value="confirmed">Active grazing observed</option><option value="none_observed">No recent grazing observed (does not exclude)</option></select>
   </div>
   <div class="field"><label for="access">Reported access</label>
     <select id="access"><option value="unknown">Unknown</option><option value="accessible">Appears accessible / permission reported</option><option value="permission_required">Permission required / unclear</option><option value="denied">Access denied</option></select>
@@ -622,8 +623,8 @@ let selectedHabitat=null;
 function habitatForField(p, custom=false){
   const ids=p._group_ids||[String(p.id)];
   const notes=ids.map(k=>annotationById[String(k)]||haloAnnotations[String(k)]).filter(Boolean);
-  const n=notes.find(k=>k.assessment==='unsuitable'||k.grazing==='none_observed') ||
-          notes.find(k=>k.grazing==='confirmed'||k.assessment==='promising') ||notes[0]||{};
+  const n=notes.find(k=>k.assessment==='unsuitable') ||
+          notes.find(k=>k.observation==='observed'||k.assessment==='promising'||k.grazing==='confirmed') ||notes[0]||{};
   return {id:String(p.id), ids, type:String(p.markslag||''), eligible:custom?p.markslag==='pasture':isEligibleOfficial(p),
     assessment:n.assessment||'unknown',grazing:n.grazing||'unknown',access:n.access||'unknown',
     observation:n.observation||'not_surveyed',visited:!!n.visited,custom};
@@ -631,12 +632,12 @@ function habitatForField(p, custom=false){
 function priorityForField(h, weather){
   if(!h)return null;
   if(!h.eligible)return {label:'Not prioritized',reason:'Not registered or marked as an eligible pasture habitat.',state:'excluded'};
-  if(h.assessment==='unsuitable'||h.grazing==='none_observed')return {label:'Excluded by field notes',reason:'Your assessment excludes this field or reports no grazing observed. This can be revised after further evidence.',state:'excluded'};
+  if(h.assessment==='unsuitable')return {label:'Excluded by field notes',reason:'Habitat has been manually marked unsuitable for the selected species. Historical observations remain recorded but do not override exclusion.',state:'excluded'};
   if(h.access==='denied')return {label:'Do not prioritize for access',reason:'Your access notes indicate access denied. No legal access determination is made by Shroomap.',state:'excluded'};
   if(!Number.isFinite(weather))return {label:'Weather unavailable',reason:'Cannot rank without usable local environmental data.',state:'unknown'};
-  const positive=h.grazing==='confirmed'||(h.assessment==='promising'&&h.visited);
+  const positive=h.observation==='observed'||h.assessment==='promising'||h.grazing==='confirmed';
   const high=weather>=75, moderate=weather>=50;
-  if(high && positive)return {label:'High priority candidate',reason:'Favourable experimental fruiting weather and confirmed grazing or a visited, positively assessed habitat.',state:'high'};
+  if(high && positive)return {label:'High priority candidate',reason:h.observation==='observed'?'Favourable experimental fruiting weather and a recorded occurrence of the selected species in this field.':h.assessment==='promising'?'Favourable experimental fruiting weather and personally verified suitable habitat.':'Favourable experimental fruiting weather and observed grazing activity.',state:'high'};
   if(high)return {label:'Investigate habitat',reason:'Favourable experimental fruiting weather, but grazing or habitat suitability has not been verified.',state:'investigate'};
   if(moderate)return {label:positive?'Moderate priority':'Conditional candidate',reason:positive?'Positive habitat evidence; weather conditions are only moderately favourable.':'Intermediate weather index and unverified habitat conditions.',state:'moderate'};
   return {label:'Low weather priority today',reason:'The current experimental fruiting-weather index is low. This is not evidence that the species is absent.',state:'low'};
@@ -695,7 +696,7 @@ document.getElementById('saveNotes').addEventListener('click',async()=>{
   const idAtRequest=activeField;
   const payload={species_id:speciesId};
   ids.forEach(k=>payload[k]=document.getElementById(k).value);
-  payload.visited=document.getElementById('visited').checked;
+  payload.visited=document.getElementById('visited').checked || payload.assessment!=='unknown' || payload.grazing!=='unknown' || payload.observation!=='not_surveyed';
   document.getElementById('saveStatus').textContent='Saving…';
   try {
     const r=await fetch('/api/notes/group', {
@@ -705,6 +706,7 @@ document.getElementById('saveNotes').addEventListener('click',async()=>{
     const data=await r.json();
     if(!r.ok) throw Error(data.error || 'Save failed');
     if(activeField!==idAtRequest) return;
+    document.getElementById('visited').checked=!!data.note.visited;
     document.getElementById('saveStatus').textContent='Saved';
     document.getElementById('lastSaved').textContent='Last saved: '+data.note.updated_at;
     for(const gid of (window.activeGroupIds||[idAtRequest])){annotationById[gid]=data.note;haloAnnotations[gid]={assessment:data.note.assessment,grazing:data.note.grazing,visited:data.note.visited,access:data.note.access,observation:data.note.observation};}
@@ -927,14 +929,18 @@ function addHalo(latlng, strength, user=false){
   L.marker(latlng,{pane:'regionalHeat',icon,interactive:false,keyboard:false}).addTo(regionalHeat);
 }
 function priorityEvidence(note){
-  if(!note || note.assessment==='unsuitable'||note.grazing==='none_observed'||note.access==='denied')return null;
-  if(note.grazing==='confirmed')return 'Grazing confirmed';
-  if(note.assessment==='promising'&&note.visited)return 'Visited; suitable habitat';
-  return null; // Prior species observation alone does not qualify for a ring.
+  if(!note || note.assessment==='unsuitable'||note.access==='denied')return null;
+  // A recorded target-species observation is the strongest direct evidence
+  // that this field has supported that species. It does not predict today.
+  if(note.observation==='observed')return 'Target species previously observed';
+  if(note.assessment==='promising')return 'Habitat suitability confirmed';
+  if(note.grazing==='confirmed')return 'Grazing observed';
+  return null;
 }
 function noteForGroups(groupIds){
   const notes=groupIds.map(id=>annotationById[String(id)]||haloAnnotations[String(id)]).filter(Boolean);
-  if(notes.some(n=>n.assessment==='unsuitable'||n.grazing==='none_observed'||n.access==='denied'))return {assessment:'unsuitable'};
+  if(notes.some(n=>n.assessment==='unsuitable'))return {assessment:'unsuitable'};
+  if(notes.some(n=>n.access==='denied'))return {access:'denied'};
   return notes.find(n=>priorityEvidence(n))||notes[0]||null;
 }
 function addPriorityRing(lat,lng,user=false){
@@ -1021,7 +1027,7 @@ function drawHeat(){
     const id=key.replace('official:','');
     const groupIds=p.groupIds||[id];
     const note=noteForGroups(groupIds);
-    if(note?.assessment==='unsuitable'||note?.grazing==='none_observed'||note?.access==='denied')continue;
+    if(note?.assessment==='unsuitable'||note?.access==='denied')continue;
     addOnce(p.lat,p.lng,false,{id,name:'Field '+id,ids:groupIds,note,type:'Bete'});
     if(count>=700)break;
   }
@@ -1029,7 +1035,7 @@ function drawHeat(){
     for(const area of ownAreas){
       if(area.habitat!=='pasture')continue;
       const n=haloAnnotations['custom:'+area.id] || annotationById['custom:'+area.id];
-      if(n?.assessment==='unsuitable' || n?.grazing==='none_observed'||n?.access==='denied')continue;
+      if(n?.assessment==='unsuitable'||n?.access==='denied')continue;
       // A polygon interior point is computed from original field geometry.
       let ring=area.geometry?.coordinates?.[0];
       if(!ring||ring.length<4)continue;
@@ -2007,6 +2013,11 @@ def field_notes(field_id):
     notes = data.get("notes")
     if not isinstance(notes, str) or len(notes) > 2000:
         return jsonify({"error": "Invalid notes"}), 400
+    # Assessments or field searches imply a physical visit. Preserve past visits
+    # if a later edit clears an assessment or unchecks the visit box.
+    visited = (data["visited"] or data["assessment"] != "unknown"
+               or data["grazing"] != "unknown"
+               or data["observation"] != "not_surveyed")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with DB_LOCK, sqlite3.connect(DB_PATH) as conn:
         conn.execute("""INSERT INTO field_notes
@@ -2016,9 +2027,9 @@ def field_notes(field_id):
               grazing=excluded.grazing, access=excluded.access,
               observation=excluded.observation, notes=excluded.notes,
               updated_at=excluded.updated_at,
-              assessment=excluded.assessment, visited=excluded.visited""",
+              assessment=excluded.assessment, visited=MAX(field_notes.visited, excluded.visited)""",
             (field_id, SPECIES["id"], data["grazing"], data["access"],
-             data["observation"], notes, now, data["assessment"], int(data["visited"])))
+             data["observation"], notes, now, data["assessment"], int(visited)))
     return jsonify({"note": get_db_note(field_id, SPECIES["id"])})
 
 

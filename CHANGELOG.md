@@ -16,6 +16,44 @@ Notable changes to Shroomap are documented here. Version numbers are development
 - Retains the v0.15 environmental calculation, halo thresholds and local SQLite annotations; no new schema is intended.
 - **Status:** Prepared for local testing. Do not create a v0.16 tag until verified.
 
+## [0.17.1] – 2026-10-29
+
+### Added
+
+Evidence-based field prioritization with distinct outer rings highlighting promising search locations.
+
+Interactive, scrollable field-priority list, sorted by habitat evidence and environmental suitability.
+
+Map navigation from the priority list, allowing users to locate and inspect individual fields.
+
+Filtering of the priority list to show only high-priority candidates.
+
+Priority-ring eligibility based on manually confirmed suitable habitat, confirmed grazing, or recorded mushroom observations.
+
+### Changed
+
+Separated environmental suitability visualization from evidence-supported search priority. Standard green halos indicate fields meeting the selected environmental threshold, while outer rings identify fields with additional positive evidence.
+
+Updated manual suitability assessments so that marking a field Suitable is sufficient to strengthen its priority without separately requiring the Visited checkbox.
+
+Updated field-visit tracking so that manual habitat and grazing assessments automatically record a visit.
+
+Preserved visit history when previous habitat assessments are changed or cleared.
+
+Retained Unsuitable as an overriding exclusion, even when historical positive observations exist.
+
+Kept the existing experimental fruiting-weather scoring model unchanged.
+
+### Limitations
+
+Habitat suitability assessments and grazing-based priority rules are currently designed for the single supported species, Protostropharia semiglobata.
+
+Historical observations indicate previous species occurrence but do not establish current fruiting conditions.
+
+Priority classifications are evidence-based heuristics, not calibrated probabilities of finding mushrooms.
+
+Species-specific habitat assessments and independent species profiles are planned for future development.
+
 ## [0.16] – 2026-10-29
 
 ### Added
