@@ -16,6 +16,23 @@ Notable changes to Shroomap are documented here. Version numbers are development
 - Retains the v0.15 environmental calculation, halo thresholds and local SQLite annotations; no new schema is intended.
 - **Status:** Prepared for local testing. Do not create a v0.16 tag until verified.
 
+## [0.18] – 2026-10-29
+### Added
+- Centralized species registry designed to support multiple mushroom species and independent habitat and environmental models.
+- Initial species profiles for Protostropharia semiglobata, Amanita muscaria, and Psilocybe semilanceata, with only the existing dung roundhead model enabled.
+- Shared field-data storage for species-independent information, including visits, grazing observations, and access.
+- Species catalogue API endpoint (/api/species) exposing available species and implementation status.
+- Initial database migration support for separating shared field characteristics from species-specific assessments.
+### Changed
+- Prepared the application architecture for future species switching and species-dependent habitat eligibility.
+- Preserved compatibility with existing field notes, observations, custom areas, and SQLite records.
+- Retained the existing weather scoring, halo visualization, and priority-ring behaviour for Protostropharia semiglobata.
+### Limitations
+- Only Protostropharia semiglobata is currently selectable and fully implemented.
+- Existing interface components still use parts of the legacy field-note structure.
+- Forest habitat mapping and independent scoring models for additional species have not yet been implemented.
+- Environmental suitability scores remain experimental and are not calibrated probabilities of mushroom occurrence.
+
 ## [0.17.1] – 2026-10-29
 
 ### Added

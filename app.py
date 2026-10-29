@@ -33,6 +33,84 @@ SPECIES = {
     "data_note": "Registered grazing habitat is assumed eligible unless manually excluded; this is not confirmation of active grazing or dung. Numerical weather optima are not established. Experimental score is not an occurrence probability.",
 }
 
+
+# Species catalogue and shared-field storage were introduced in v0.18.
+# Only the first profile is ENABLED. The other profiles are declarations for
+# subsequent releases: they deliberately have no habitat/scoring implementation.
+SPECIES_REGISTRY = {
+    SPECIES["id"]: {
+        **SPECIES,
+        "enabled": True,
+        "habitat_model": "official_pasture_v1",
+        "weather_model": "dung_roundhead_exploratory_v015",
+        "grazing_role": "supporting_evidence",
+    },
+    "amanita_muscaria": {
+        "id": "amanita_muscaria",
+        "scientific_name": "Amanita muscaria",
+        "common_name": "Fly agaric (röd flugsvamp)",
+        "enabled": False,
+        "habitat_model": None,
+        "weather_model": None,
+        "grazing_role": "irrelevant",
+        "data_note": "Inactive: requires verified tree/woodland habitat data and a separate model.",
+    },
+    "psilocybe_semilanceata": {
+        "id": "psilocybe_semilanceata",
+        "scientific_name": "Psilocybe semilanceata",
+        "common_name": "Liberty cap",
+        "enabled": False,
+        "habitat_model": None,
+        "weather_model": None,
+        "grazing_role": "not_required",
+        "data_note": "Inactive catalogue entry; no field-ranking or hotspot model implemented.",
+    },
+}
+ACTIVE_SPECIES_ID = SPECIES["id"]
+
+
+def species_is_active(species_id):
+    """Fail closed: unimplemented profiles never receive scoring/notes endpoints."""
+    profile = SPECIES_REGISTRY.get(species_id)
+    return bool(profile and profile["enabled"] and profile["habitat_model"] and profile["weather_model"])
+
+
+def species_public_profile(profile):
+    return {k: profile.get(k) for k in
+            ("id", "scientific_name", "common_name", "enabled",
+             "habitat_model", "weather_model", "grazing_role", "data_note")}
+
+
+@app.route("/api/species")
+def species_catalogue():
+    return jsonify(active_species_id=ACTIVE_SPECIES_ID,
+                   profiles=[species_public_profile(v) for v in SPECIES_REGISTRY.values()])
+
+
+# Shared-field data is species-independent. Legacy field_notes is retained for
+# compatibility with v0.18. Species assessments/occurrences stay separate.
+def get_shared_field_data(field_id):
+    with DB_LOCK, sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        result = conn.execute(
+            "SELECT * FROM shared_field_data WHERE field_id=?", (field_id,)
+        ).fetchone()
+    return dict(result) if result else None
+
+
+def update_shared_field_data(conn, field_id, *, visited, grazing, access, now):
+    """Merge facts without losing historical visits when a field is edited."""
+    conn.execute("""INSERT INTO shared_field_data
+        (field_id,visited,grazing,access,updated_at)
+        VALUES (?,?,?,?,?)
+        ON CONFLICT(field_id) DO UPDATE SET
+          visited=MAX(shared_field_data.visited, excluded.visited),
+          grazing=excluded.grazing,
+          access=excluded.access,
+          updated_at=excluded.updated_at""",
+        (field_id, int(visited), grazing, access, now))
+
+
 def _inventory_date(feature):
     raw = str((feature.get('properties') or {}).get('inventeringsdatum') or '').strip()
     try:
@@ -233,7 +311,7 @@ HTML = r"""<!DOCTYPE html>
     <label for="haloThreshold">Minimum provisional fruiting-weather index: <b id="haloThresholdLabel">70</b>/100</label>
     <input id="haloThreshold" type="range" min="0" max="100" step="5" value="70" style="width:100%">
     <div class="heat-legend"><span class="heat-swatch"></span> Green = weather-qualified pasture candidate (not a verified finding)</div>
-    <p class="hint">Field priority (v0.17.1): halos pass the experimental weather threshold; a solid outer ring identifies qualifying fields with verified suitable habitat, observed grazing, or a confirmed field-note observation of the selected species. Historical occurrence is habitat evidence, not evidence of fruiting today.</p>
+    <p class="hint">Field priority (v0.18, current species): halos pass the experimental weather threshold; a solid outer ring identifies qualifying fields with verified suitable habitat, observed grazing, or a confirmed field-note observation of the selected species. Historical occurrence is habitat evidence, not evidence of fruiting today.</p>
     <p class="hint" id="heatStatus">Preparing regional overview…</p>
     <details id="priorityPanel" open style="margin:10px 0;border:1px solid #bfd5c8;border-radius:6px;padding:8px;background:#f7faf7">
       <summary style="cursor:pointer;font-weight:600">Field priorities <span id="priorityCount" style="font-weight:normal"></span></summary>
@@ -1826,7 +1904,7 @@ def validate_area(data):
     return name.strip(),data["habitat"],notes,geometry
 
 def validate_observation(data):
-    if not isinstance(data,dict) or data.get("species_id")!=SPECIES["id"]: raise ValueError("Invalid species")
+    if not isinstance(data,dict) or not species_is_active(data.get("species_id")): raise ValueError("Invalid or inactive species")
     lat,lon=data.get('lat'),data.get('lon')
     if any(not isinstance(n,(int,float)) or isinstance(n,bool) or not math.isfinite(n) for n in (lat,lon)) or not (55<=lat<=70 and 10<=lon<=25): raise ValueError("Invalid coordinates")
     date=data.get('observed_on')
@@ -1898,6 +1976,28 @@ def init_db():
             conn.execute("ALTER TABLE field_notes ADD COLUMN assessment TEXT NOT NULL DEFAULT 'unknown'")
         if "visited" not in columns:
             conn.execute("ALTER TABLE field_notes ADD COLUMN visited INTEGER NOT NULL DEFAULT 0")
+        conn.execute("""CREATE TABLE IF NOT EXISTS shared_field_data (
+            field_id TEXT PRIMARY KEY,
+            visited INTEGER NOT NULL DEFAULT 0,
+            grazing TEXT NOT NULL DEFAULT 'unknown',
+            access TEXT NOT NULL DEFAULT 'unknown',
+            updated_at TEXT NOT NULL
+        )""")
+        # One-time non-destructive import of legacy information for existing fields.
+        # Newest annotation per field is used for mutable characteristics. Visits
+        # are aggregated across all legacy species notes. Existing shared records
+        # are never replaced during this migration.
+        conn.execute("""INSERT OR IGNORE INTO shared_field_data
+            (field_id,visited,grazing,access,updated_at)
+            SELECT n.field_id,
+                   (SELECT MAX(CAST(v.visited AS INTEGER))
+                    FROM field_notes v WHERE v.field_id=n.field_id),
+                   n.grazing,n.access,n.updated_at
+            FROM field_notes n
+            WHERE n.rowid=(SELECT x.rowid FROM field_notes x
+                           WHERE x.field_id=n.field_id
+                           ORDER BY x.updated_at DESC,x.rowid DESC LIMIT 1)
+        """)
 
 
 def get_db_note(field_id, species_id):
@@ -1910,6 +2010,19 @@ def get_db_note(field_id, species_id):
         return dict(row) if row else None
 
 
+
+
+@app.route('/api/fields/<field_id>/context')
+def field_context(field_id):
+    if not ((field_id.isdigit() and len(field_id)<=20) or
+            (field_id.startswith('custom:') and field_id[7:].isdigit() and len(field_id)<=27)):
+        return jsonify(error="Invalid field ID"), 400
+    species_id=request.args.get('species', ACTIVE_SPECIES_ID)
+    if not species_is_active(species_id):
+        return jsonify(error="Species not yet enabled"), 400
+    return jsonify(field_id=field_id, species_id=species_id,
+                   shared=get_shared_field_data(field_id),
+                   species_assessment=get_db_note(field_id,species_id))
 
 
 @app.route('/api/halo-annotations/all')
@@ -2030,6 +2143,10 @@ def field_notes(field_id):
               assessment=excluded.assessment, visited=MAX(field_notes.visited, excluded.visited)""",
             (field_id, SPECIES["id"], data["grazing"], data["access"],
              data["observation"], notes, now, data["assessment"], int(visited)))
+        # A shared visit/grazing/access record is written in the SAME SQLite
+        # transaction as the legacy species note (no partial record updates).
+        update_shared_field_data(conn, field_id, visited=visited,
+                                 grazing=data["grazing"], access=data["access"], now=now)
     return jsonify({"note": get_db_note(field_id, SPECIES["id"])})
 
 
